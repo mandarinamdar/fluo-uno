@@ -15,6 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# shellcheck source=bin/impl/util.sh
 source "$UNO_HOME"/bin/impl/util.sh
 
 pkill -f accumulo.start
@@ -23,19 +24,13 @@ pkill -f accumulo.start
 set -e
 trap 'echo "[ERROR] Error occurred at $BASH_SOURCE:$LINENO command: $BASH_COMMAND"' ERR
 
-if [[ -z "$ACCUMULO_REPO" ]]; then
-  verify_exist_hash "$ACCUMULO_TARBALL" "$ACCUMULO_HASH"
-fi
-
-if [[ $1 != "--no-deps" ]]; then
-  install_component Hadoop
-  install_component ZooKeeper
-fi
+[[ -z $ACCUMULO_REPO ]] && verify_exist_hash "$ACCUMULO_TARBALL" "$ACCUMULO_HASH"
+[[ $1 != '--no-deps' ]] && install_component hadoop && install_component zookeeper
 
 print_to_console "Installing Apache Accumulo $ACCUMULO_VERSION at $ACCUMULO_HOME"
 
-rm -rf "$INSTALL"/accumulo-*
-rm -f "$ACCUMULO_LOG_DIR"/*
+rm -rf "${INSTALL:?}"/accumulo-*
+rm -f "${ACCUMULO_LOG_DIR:?}"/*
 mkdir -p "$ACCUMULO_LOG_DIR"
 
 tar xzf "$DOWNLOADS/$ACCUMULO_TARBALL" -C "$INSTALL"
@@ -49,6 +44,8 @@ if [[ $ACCUMULO_VERSION =~ ^1\..*$ ]]; then
   $SED "s#localhost#$UNO_HOST#" "$conf/slaves"
   cp "$UNO_HOME"/conf/accumulo/1/* "$conf"
   $SED "s#export HADOOP_PREFIX=[^ ]*#export HADOOP_PREFIX=$HADOOP_HOME#" "$conf"/accumulo-env.sh
+  $SED "s#ZOOKEEPER_HOME#ZOOKEEPER_HOME/lib#" "$accumulo_conf"
+  $SED "s#-maxdepth 1#-maxdepth 2#" "$ACCUMULO_HOME"/bin/start-all.sh
 else
   accumulo_conf=$conf/accumulo.properties
   cp "$UNO_HOME"/conf/accumulo/2/* "$conf"
@@ -59,8 +56,18 @@ else
   $SED "s#instance[.]zookeepers=localhost:2181#instance.zookeepers=$UNO_HOST:2181#" "$conf"/accumulo-client.properties
   $SED "s#auth[.]principal=#auth.principal=$ACCUMULO_USER#" "$conf"/accumulo-client.properties
   $SED "s#auth[.]token=#auth.token=$ACCUMULO_PASSWORD#" "$conf"/accumulo-client.properties
+  if [[ $ACCUMULO_VERSION =~ ^2\.0\..*$ ]]; then
+    # Ignore false positive; we actually want the literal '${ZOOKEEPER_HOME}' and not its current value
+    # shellcheck disable=SC2016
+    $SED 's#:[$][{]ZOOKEEPER_HOME[}]/[*]:#:${ZOOKEEPER_HOME}/*:${ZOOKEEPER_HOME}/lib/*:#' "$conf"/accumulo-env.sh
+  fi
 fi
-$SED "s#localhost#$UNO_HOST#" "$conf/masters" "$conf/monitor" "$conf/gc"
+
+managers_file="$conf/managers"
+if [[ -f "$conf/masters" ]]; then
+  managers_file="$conf/masters"
+fi
+$SED "s#localhost#$UNO_HOST#" "$managers_file" "$conf/monitor" "$conf/gc"
 $SED "s#export ZOOKEEPER_HOME=[^ ]*#export ZOOKEEPER_HOME=$ZOOKEEPER_HOME#" "$conf"/accumulo-env.sh
 $SED "s#export ACCUMULO_LOG_DIR=[^ ]*#export ACCUMULO_LOG_DIR=$ACCUMULO_LOG_DIR#" "$conf"/accumulo-env.sh
 if [[ $ACCUMULO_VERSION =~ ^1\..*$ ]]; then
@@ -82,10 +89,13 @@ $SED "s#ACCUMULO_INSTANCE#$ACCUMULO_INSTANCE#" "$it_props"
 $SED "s#HADOOP_CONF_DIR#$HADOOP_CONF_DIR#" "$it_props"
 $SED "s#ACCUMULO_HOME#$ACCUMULO_HOME#" "$it_props"
 
-if [[ "$ACCUMULO_USE_NATIVE_MAP" == "true" ]]; then
+if [[ $ACCUMULO_USE_NATIVE_MAP == 'true' ]]; then
   if [[ $ACCUMULO_VERSION =~ ^1\..*$ ]]; then
     "$ACCUMULO_HOME"/bin/build_native_library.sh
   else
     "$ACCUMULO_HOME"/bin/accumulo-util build-native
   fi
 fi
+
+true
+# accumulo.sh
